@@ -115,3 +115,152 @@ resource "azurerm_windows_function_app" "products_service" {
     ]
   }
 }
+
+resource "azurerm_windows_function_app_slot" "products_service_function_app_slot" {
+  name                 = "wfas-product-service-slot-ne-001"
+  function_app_id      = azurerm_windows_function_app.products_service.id
+  storage_account_name = azurerm_storage_account.product_service_account.name
+  storage_account_access_key = azurerm_storage_account.product_service_account.primary_access_key
+
+   site_config {
+    always_on = false
+
+    application_insights_key               = azurerm_application_insights.products_service_insights.instrumentation_key
+    application_insights_connection_string = azurerm_application_insights.products_service_insights.connection_string
+
+    # For production systems set this to false, but consumption plan supports only 32bit workers
+    use_32_bit_worker = true
+
+    # Enable function invocations from Azure Portal.
+    cors {
+      allowed_origins = ["https://portal.azure.com", "http://localhost:4200", "https://staccfrontne001.z16.web.core.windows.net"]
+    }
+
+    application_stack {
+      node_version = "~18"
+    }
+  }
+}
+
+# App Config
+resource "azurerm_app_configuration" "product_service_config" {
+  name                = "appconfig-product-service-ne-001"
+  resource_group_name = azurerm_resource_group.product_service_rg.name
+  location            = azurerm_resource_group.product_service_rg.location
+  sku                 = "free"
+}
+
+# API Manager
+resource "azurerm_resource_group" "api_rg" {
+  name     = "rg-api-manager-ne-001"
+  location = "northeurope"
+}
+
+resource "azurerm_api_management" "api_manager" {
+  name                = "apim-api-manager-ne-001"
+  resource_group_name = azurerm_resource_group.api_rg.name
+  location            = azurerm_resource_group.api_rg.location
+  publisher_name      = "Aliaksandr Shyshonak"
+  publisher_email     = "aliaksandr_shyshonak@epam.com"
+
+  sku_name = "Consumption_0"
+}
+
+resource "azurerm_api_management_api" "product_service_api" {
+  name                = "apim-product-service-ne-001"
+  resource_group_name = azurerm_resource_group.api_rg.name
+  api_management_name = azurerm_api_management.api_manager.name
+  revision            = "1"
+  display_name        = "Product Service API"
+  path                = "product-service"
+
+  protocols = ["https"]
+}
+
+data "azurerm_function_app_host_keys" "product_service_keys" {
+  name                = azurerm_windows_function_app.products_service.name
+  resource_group_name = azurerm_resource_group.product_service_rg.name
+}
+
+resource "azurerm_api_management_backend" "product_service_backend" {
+  name                = "apimb-product-service-ne-001"
+  resource_group_name = azurerm_resource_group.api_rg.name
+  api_management_name = azurerm_api_management.api_manager.name
+  protocol            = "http"
+  url                 = "https://${azurerm_windows_function_app.products_service.name}.azurewebsites.net/api"
+  description         = "Product Service API"
+
+  credentials {
+    certificate = []
+    query       = {}
+
+    header = {
+      "x-functions-key" = data.azurerm_function_app_host_keys.product_service_keys.default_function_key
+    }
+  }
+}
+
+resource "azurerm_api_management_api_policy" "product_service_api_policy" {
+  api_management_name = azurerm_api_management.api_manager.name
+  api_name            = azurerm_api_management_api.product_service_api.name
+  resource_group_name = azurerm_resource_group.api_rg.name
+
+  xml_content = <<XML
+ <policies>
+ 	<inbound>
+ 		<set-backend-service backend-id="${azurerm_api_management_backend.product_service_backend.name}"/>
+ 		<base/>
+ 	</inbound>
+ 	<backend>
+ 		<base/>
+ 	</backend>
+ 	<outbound>
+ 		<base/>
+ 	</outbound>
+ 	<on-error>
+ 		<base/>
+ 	</on-error>
+ </policies>
+XML
+}
+
+resource "azurerm_api_management_api_operation" "get_product_list" {
+  operation_id        = "get_product_list"
+  api_name            = azurerm_api_management_api.product_service_api.name
+  api_management_name = azurerm_api_management.api_manager.name
+  resource_group_name = azurerm_resource_group.api_rg.name
+  display_name        = "Get all products"
+  method              = "GET"
+  url_template        = "/products"
+}
+
+resource "azurerm_api_management_api_operation" "get_product_by_id" {
+  operation_id        = "get_product_by_id"
+  api_name            = azurerm_api_management_api.product_service_api.name
+  api_management_name = azurerm_api_management.api_manager.name
+  resource_group_name = azurerm_resource_group.api_rg.name
+  display_name        = "Get product by id"
+  method              = "GET"
+  url_template        = "/products/{id}"
+
+  template_parameter {
+    name     = "id"
+    type     = "guid"
+    required = true
+  }
+}
+
+resource "azurerm_api_management_api_operation" "example" {
+  operation_id        = "example"
+  api_name            = azurerm_api_management_api.product_service_api.name
+  api_management_name = azurerm_api_management.api_manager.name
+  resource_group_name = azurerm_resource_group.api_rg.name
+  display_name        = "Example"
+  method              = "GET"
+  url_template        = "/example"
+  description         = "Example long <b>description</b>."
+
+  response {
+    status_code = 200
+  }
+}
