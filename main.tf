@@ -117,12 +117,12 @@ resource "azurerm_windows_function_app" "products_service" {
 }
 
 resource "azurerm_windows_function_app_slot" "products_service_function_app_slot" {
-  name                 = "wfas-product-service-slot-ne-001"
-  function_app_id      = azurerm_windows_function_app.products_service.id
-  storage_account_name = azurerm_storage_account.product_service_account.name
+  name                       = "wfas-product-service-slot-ne-001"
+  function_app_id            = azurerm_windows_function_app.products_service.id
+  storage_account_name       = azurerm_storage_account.product_service_account.name
   storage_account_access_key = azurerm_storage_account.product_service_account.primary_access_key
 
-   site_config {
+  site_config {
     always_on = false
 
     application_insights_key               = azurerm_application_insights.products_service_insights.instrumentation_key
@@ -250,6 +250,26 @@ resource "azurerm_api_management_api_operation" "get_product_by_id" {
   }
 }
 
+resource "azurerm_api_management_api_operation" "post_product" {
+  operation_id        = "post_product"
+  api_name            = azurerm_api_management_api.product_service_api.name
+  api_management_name = azurerm_api_management.api_manager.name
+  resource_group_name = azurerm_resource_group.api_rg.name
+  display_name        = "Create a new product"
+  method              = "POST"
+  url_template        = "/products"
+}
+
+resource "azurerm_api_management_api_operation" "get_product_total" {
+  operation_id        = "get_product_total"
+  api_name            = azurerm_api_management_api.product_service_api.name
+  api_management_name = azurerm_api_management.api_manager.name
+  resource_group_name = azurerm_resource_group.api_rg.name
+  display_name        = "Get total of available products"
+  method              = "GET"
+  url_template        = "/products/total"
+}
+
 resource "azurerm_api_management_api_operation" "example" {
   operation_id        = "example"
   api_name            = azurerm_api_management_api.product_service_api.name
@@ -262,5 +282,72 @@ resource "azurerm_api_management_api_operation" "example" {
 
   response {
     status_code = 200
+  }
+}
+
+# Cosmos DB
+resource "azurerm_resource_group" "cosmos_db_rg" {
+  name     = "rg-cosmos-db-ne-001"
+  location = "northeurope"
+}
+
+resource "azurerm_cosmosdb_account" "cosmos_db_account" {
+  name                = "cdbacc-app-database-ne-001"
+  resource_group_name = azurerm_resource_group.cosmos_db_rg.name
+  location            = azurerm_resource_group.cosmos_db_rg.location
+  offer_type          = "Standard"
+  kind                = "GlobalDocumentDB"
+
+  capabilities {
+    name = "EnableServerless"
+  }
+
+  consistency_policy {
+    consistency_level = "Eventual"
+  }
+
+  geo_location {
+    failover_priority = 0
+    location          = azurerm_resource_group.cosmos_db_rg.location
+  }
+}
+
+resource "azurerm_cosmosdb_sql_database" "product_database" {
+  name                = "product-db"
+  resource_group_name = azurerm_resource_group.cosmos_db_rg.name
+  account_name        = azurerm_cosmosdb_account.cosmos_db_account.name
+}
+
+resource "azurerm_cosmosdb_sql_container" "products" {
+  name                = "products"
+  resource_group_name = azurerm_resource_group.cosmos_db_rg.name
+  account_name        = azurerm_cosmosdb_account.cosmos_db_account.name
+  database_name       = azurerm_cosmosdb_sql_database.product_database.name
+  partition_key_path  = "/id"
+
+  # Cosmos DB supports TTL for the records
+  default_ttl = -1
+
+  indexing_policy {
+    excluded_path {
+      path = "/*"
+    }
+  }
+}
+
+resource "azurerm_cosmosdb_sql_container" "stocks" {
+  name                = "stocks"
+  resource_group_name = azurerm_resource_group.cosmos_db_rg.name
+  account_name        = azurerm_cosmosdb_account.cosmos_db_account.name
+  database_name       = azurerm_cosmosdb_sql_database.product_database.name
+  partition_key_path  = "/id"
+
+  # Cosmos DB supports TTL for the records
+  default_ttl = -1
+
+  indexing_policy {
+    excluded_path {
+      path = "/*"
+    }
   }
 }
