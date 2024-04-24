@@ -13,10 +13,16 @@ provider "azurerm" {
   features {}
 }
 
+variable "location" {
+  type        = string
+  default     = "northeurope"
+  description = "Resource groups location"
+}
+
 # Frontend
 resource "azurerm_resource_group" "front_end_rg" {
   name     = "rg-frontend-sand-ne-001"
-  location = "northeurope"
+  location = var.location
 }
 
 resource "azurerm_storage_account" "front_end_storage_account" {
@@ -36,7 +42,7 @@ resource "azurerm_storage_account" "front_end_storage_account" {
 # Product service
 resource "azurerm_resource_group" "product_service_rg" {
   name     = "rg-product-service-ne-001"
-  location = "northeurope"
+  location = var.location
 }
 
 resource "azurerm_storage_account" "product_service_account" {
@@ -101,6 +107,9 @@ resource "azurerm_windows_function_app" "products_service" {
   app_settings = {
     WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.product_service_account.primary_connection_string
     WEBSITE_CONTENTSHARE                     = azurerm_storage_share.product_service_account.name
+    COSMOS_ENDPOINT                          = azurerm_cosmosdb_account.cosmos_db_account.endpoint
+    COSMOS_KEY                               = azurerm_cosmosdb_account.cosmos_db_account.primary_key
+    DB_NAME                                  = azurerm_cosmosdb_sql_database.product_database.name
   }
 
   # The app settings changes cause downtime on the Function App. e.g. with Azure Function App Slots
@@ -140,6 +149,17 @@ resource "azurerm_windows_function_app_slot" "products_service_function_app_slot
       node_version = "~18"
     }
   }
+
+  app_settings = {
+    WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.product_service_account.primary_connection_string
+    WEBSITE_CONTENTSHARE                     = azurerm_storage_share.product_service_account.name
+    COSMOS_ENDPOINT                          = azurerm_cosmosdb_account.cosmos_db_account.endpoint
+    DB_NAME                                  = azurerm_cosmosdb_sql_database.product_database.name
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
 }
 
 # App Config
@@ -153,7 +173,7 @@ resource "azurerm_app_configuration" "product_service_config" {
 # API Manager
 resource "azurerm_resource_group" "api_rg" {
   name     = "rg-api-manager-ne-001"
-  location = "northeurope"
+  location = var.location
 }
 
 resource "azurerm_api_management" "api_manager" {
@@ -288,7 +308,7 @@ resource "azurerm_api_management_api_operation" "example" {
 # Cosmos DB
 resource "azurerm_resource_group" "cosmos_db_rg" {
   name     = "rg-cosmos-db-ne-001"
-  location = "northeurope"
+  location = var.location
 }
 
 resource "azurerm_cosmosdb_account" "cosmos_db_account" {
@@ -350,4 +370,31 @@ resource "azurerm_cosmosdb_sql_container" "stocks" {
       path = "/*"
     }
   }
+}
+
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_cosmosdb_sql_role_definition" "read_role" {
+  name                = "cosmosdb-read-role-ne-001"
+  resource_group_name = azurerm_resource_group.cosmos_db_rg.name
+  account_name        = azurerm_cosmosdb_account.cosmos_db_account.name
+  type                = "CustomRole"
+  assignable_scopes   = [azurerm_cosmosdb_account.cosmos_db_account.id]
+
+  permissions {
+    data_actions = [
+      "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/readChangeFeed",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read",
+    ]
+  }
+}
+
+resource "azurerm_cosmosdb_sql_role_assignment" "read_role_assigment" {
+  resource_group_name = azurerm_resource_group.cosmos_db_rg.name
+  account_name        = azurerm_cosmosdb_account.cosmos_db_account.name
+  role_definition_id  = azurerm_cosmosdb_sql_role_definition.read_role.id
+  principal_id        = azurerm_windows_function_app_slot.products_service_function_app_slot.identity.0.principal_id
+  scope               = azurerm_cosmosdb_account.cosmos_db_account.id
 }
