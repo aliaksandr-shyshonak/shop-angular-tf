@@ -230,6 +230,15 @@ resource "azurerm_api_management_api_policy" "product_service_api_policy" {
  	<inbound>
  		<set-backend-service backend-id="${azurerm_api_management_backend.product_service_backend.name}"/>
  		<base/>
+    <cors allow-credentials="false">
+      <allowed-origins>
+        <origin>*</origin>
+      </allowed-origins>
+      <allowed-methods>
+        <method>GET</method>
+        <method>POST</method>
+      </allowed-methods>
+    </cors>
  	</inbound>
  	<backend>
  		<base/>
