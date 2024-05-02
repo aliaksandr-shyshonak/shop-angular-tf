@@ -476,6 +476,7 @@ resource "azurerm_windows_function_app" "import_service" {
   app_settings = {
     WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.import_service_account.primary_connection_string
     WEBSITE_CONTENTSHARE                     = azurerm_storage_share.import_service_account.name
+    CONNECTION_IMPORT_FILES_STORAGE_ACCOUNT  = azurerm_storage_account.import_service_files.primary_connection_string
   }
 
   # The app settings changes cause downtime on the Function App. e.g. with Azure Function App Slots
@@ -489,4 +490,45 @@ resource "azurerm_windows_function_app" "import_service" {
       tags["hidden-link: /app-insights-conn-string"]
     ]
   }
+}
+
+# File container
+resource "azurerm_storage_account" "import_service_files" {
+  name                     = "staccimportfilesne001"
+  resource_group_name      = azurerm_resource_group.import_service_rg.name
+  location                 = azurerm_resource_group.import_service_rg.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  access_tier              = "Cool"
+
+  blob_properties {
+    cors_rule {
+      allowed_headers    = ["*"]
+      allowed_methods    = ["PUT", "GET"]
+      allowed_origins    = ["*"]
+      exposed_headers    = ["*"]
+      max_age_in_seconds = 0
+    }
+  }
+}
+
+resource "azurerm_storage_container" "uploaded_files" {
+  name                  = "uploaded"
+  storage_account_name  = azurerm_storage_account.import_service_files.name
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_container" "parsed_files" {
+  name                  = "parsed"
+  storage_account_name  = azurerm_storage_account.import_service_files.name
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_blob" "new_catalog_file" {
+  name                   = "new-catalog.csv"
+  storage_account_name   = azurerm_storage_account.import_service_files.name
+  storage_container_name = azurerm_storage_container.uploaded_files.name
+  type                   = "Block"
+  source                 = "catalog.csv"
+  access_tier            = "Cool"
 }
