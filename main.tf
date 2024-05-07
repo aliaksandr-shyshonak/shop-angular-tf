@@ -407,3 +407,128 @@ resource "azurerm_cosmosdb_sql_role_assignment" "read_role_assigment" {
   principal_id        = azurerm_windows_function_app_slot.products_service_function_app_slot.identity.0.principal_id
   scope               = azurerm_cosmosdb_account.cosmos_db_account.id
 }
+
+# Import service
+resource "azurerm_resource_group" "import_service_rg" {
+  name     = "rg-import-service-ne-001"
+  location = var.location
+}
+
+resource "azurerm_storage_account" "import_service_account" {
+  name                     = "staccimportservfane001"
+  resource_group_name      = azurerm_resource_group.import_service_rg.name
+  location                 = azurerm_resource_group.import_service_rg.location
+  account_replication_type = "LRS"
+  account_tier             = "Standard"
+}
+
+resource "azurerm_storage_share" "import_service_account" {
+  name                 = "ss-import-service-ne-001"
+  storage_account_name = azurerm_storage_account.import_service_account.name
+  quota                = 2
+}
+
+resource "azurerm_service_plan" "import_service_plan" {
+  name                = "sp-import-service-ne-001"
+  resource_group_name = azurerm_resource_group.import_service_rg.name
+  location            = azurerm_resource_group.import_service_rg.location
+  os_type             = "Windows"
+  sku_name            = "Y1"
+}
+
+resource "azurerm_application_insights" "import_service_insights" {
+  name                = "ai-import-service-ne-001"
+  resource_group_name = azurerm_resource_group.import_service_rg.name
+  location            = azurerm_resource_group.import_service_rg.location
+  application_type    = "web"
+}
+
+resource "azurerm_windows_function_app" "import_service" {
+  name                = "wfa-import-service-ne-001"
+  resource_group_name = azurerm_resource_group.import_service_rg.name
+  location            = azurerm_resource_group.import_service_rg.location
+
+  storage_account_name       = azurerm_storage_account.import_service_account.name
+  storage_account_access_key = azurerm_storage_account.import_service_account.primary_access_key
+  service_plan_id            = azurerm_service_plan.import_service_plan.id
+
+  builtin_logging_enabled = false
+
+  site_config {
+    always_on = false
+
+    application_insights_key               = azurerm_application_insights.import_service_insights.instrumentation_key
+    application_insights_connection_string = azurerm_application_insights.import_service_insights.connection_string
+
+    # For production systems set this to false, but consumption plan supports only 32bit workers
+    use_32_bit_worker = true
+
+    # Enable function invocations from Azure Portal.
+    cors {
+      allowed_origins = ["https://portal.azure.com", "http://localhost:4200", "https://staccfrontne001.z16.web.core.windows.net"]
+    }
+
+    application_stack {
+      node_version = "~18"
+    }
+  }
+
+  app_settings = {
+    WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.import_service_account.primary_connection_string
+    WEBSITE_CONTENTSHARE                     = azurerm_storage_share.import_service_account.name
+    CONNECTION_IMPORT_FILES_STORAGE_ACCOUNT  = azurerm_storage_account.import_service_files.primary_connection_string
+  }
+
+  # The app settings changes cause downtime on the Function App. e.g. with Azure Function App Slots
+  # Therefore it is better to ignore those changes and manage app settings separately off the Terraform.
+  lifecycle {
+    ignore_changes = [
+      app_settings,
+      site_config["application_stack"], // workaround for a bug when azure just "kills" your app
+      tags["hidden-link: /app-insights-instrumentation-key"],
+      tags["hidden-link: /app-insights-resource-id"],
+      tags["hidden-link: /app-insights-conn-string"]
+    ]
+  }
+}
+
+# File container
+resource "azurerm_storage_account" "import_service_files" {
+  name                     = "staccimportfilesne001"
+  resource_group_name      = azurerm_resource_group.import_service_rg.name
+  location                 = azurerm_resource_group.import_service_rg.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  access_tier              = "Cool"
+
+  blob_properties {
+    cors_rule {
+      allowed_headers    = ["*"]
+      allowed_methods    = ["PUT", "GET"]
+      allowed_origins    = ["*"]
+      exposed_headers    = ["*"]
+      max_age_in_seconds = 0
+    }
+  }
+}
+
+resource "azurerm_storage_container" "uploaded_files" {
+  name                  = "uploaded"
+  storage_account_name  = azurerm_storage_account.import_service_files.name
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_container" "parsed_files" {
+  name                  = "parsed"
+  storage_account_name  = azurerm_storage_account.import_service_files.name
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_blob" "new_catalog_file" {
+  name                   = "new-catalog.csv"
+  storage_account_name   = azurerm_storage_account.import_service_files.name
+  storage_container_name = azurerm_storage_container.uploaded_files.name
+  type                   = "Block"
+  source                 = "catalog.csv"
+  access_tier            = "Cool"
+}
