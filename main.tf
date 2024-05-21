@@ -529,14 +529,14 @@ resource "azurerm_storage_container" "parsed_files" {
   container_access_type = "private"
 }
 
-resource "azurerm_storage_blob" "new_catalog_file" {
-  name                   = "new-catalog.csv"
-  storage_account_name   = azurerm_storage_account.import_service_files.name
-  storage_container_name = azurerm_storage_container.uploaded_files.name
-  type                   = "Block"
-  source                 = "catalog.csv"
-  access_tier            = "Cool"
-}
+# resource "azurerm_storage_blob" "new_catalog_file" {
+#   name                   = "new-catalog.csv"
+#   storage_account_name   = azurerm_storage_account.import_service_files.name
+#   storage_container_name = azurerm_storage_container.uploaded_files.name
+#   type                   = "Block"
+#   source                 = "catalog.csv"
+#   access_tier            = "Cool"
+# }
 
 # Service Bus
 resource "azurerm_resource_group" "message_bus" {
@@ -562,9 +562,22 @@ resource "azurerm_servicebus_subscription" "product_import_subscription" {
   max_delivery_count = 1
 }
 
-# resource "azurerm_servicebus_subscription_rule" "correct_price_product_import_rule" {
-#   name            = "sbsr-correct-price-product-import-rule-ne-001"
-#   subscription_id = azurerm_servicebus_subscription.product_import_subscription.id
-#   filter_type     = "SqlFilter"
-#   sql_filter      = "price > 0"
-# }
+resource "azurerm_servicebus_subscription_rule" "correct_price_product_import_rule" {
+  name            = "sbsr-correct-price-product-import-rule-ne-001"
+  subscription_id = azurerm_servicebus_subscription.product_import_subscription.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "productPrice > 0"
+}
+
+resource "azurerm_servicebus_subscription" "wrong_product_import_subscription" {
+  name               = "sbs-wrong-product-import-subscription-ne-001"
+  topic_id           = azurerm_servicebus_topic.product_import_topic.id
+  max_delivery_count = 1
+}
+
+resource "azurerm_servicebus_subscription_rule" "wrong_price_product_import_rule" {
+  name            = "sbsr-wrong-price-product-import-rule-ne-001"
+  subscription_id = azurerm_servicebus_subscription.wrong_product_import_subscription.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "productPrice <= 0 OR productPrice IS NULL"
+}
