@@ -110,6 +110,9 @@ resource "azurerm_windows_function_app" "products_service" {
     COSMOS_ENDPOINT                          = azurerm_cosmosdb_account.cosmos_db_account.endpoint
     COSMOS_KEY                               = azurerm_cosmosdb_account.cosmos_db_account.primary_key
     DB_NAME                                  = azurerm_cosmosdb_sql_database.product_database.name
+    CONNECTION_SERVICE_BUS                   = azurerm_servicebus_namespace.import_message_bus.default_primary_connection_string
+    IMPORT_PRODUCT_TOPIC                     = azurerm_servicebus_topic.product_import_topic.name
+    IMPORT_PRODUCT_SUBSCRIPTION              = azurerm_servicebus_subscription.product_import_subscription.name
   }
 
   # The app settings changes cause downtime on the Function App. e.g. with Azure Function App Slots
@@ -477,6 +480,8 @@ resource "azurerm_windows_function_app" "import_service" {
     WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.import_service_account.primary_connection_string
     WEBSITE_CONTENTSHARE                     = azurerm_storage_share.import_service_account.name
     CONNECTION_IMPORT_FILES_STORAGE_ACCOUNT  = azurerm_storage_account.import_service_files.primary_connection_string
+    CONNECTION_SERVICE_BUS                   = azurerm_servicebus_namespace.import_message_bus.default_primary_connection_string
+    IMPORT_PRODUCT_TOPIC                     = azurerm_servicebus_topic.product_import_topic.name
   }
 
   # The app settings changes cause downtime on the Function App. e.g. with Azure Function App Slots
@@ -524,11 +529,55 @@ resource "azurerm_storage_container" "parsed_files" {
   container_access_type = "private"
 }
 
-resource "azurerm_storage_blob" "new_catalog_file" {
-  name                   = "new-catalog.csv"
-  storage_account_name   = azurerm_storage_account.import_service_files.name
-  storage_container_name = azurerm_storage_container.uploaded_files.name
-  type                   = "Block"
-  source                 = "catalog.csv"
-  access_tier            = "Cool"
+# resource "azurerm_storage_blob" "new_catalog_file" {
+#   name                   = "new-catalog.csv"
+#   storage_account_name   = azurerm_storage_account.import_service_files.name
+#   storage_container_name = azurerm_storage_container.uploaded_files.name
+#   type                   = "Block"
+#   source                 = "catalog.csv"
+#   access_tier            = "Cool"
+# }
+
+# Service Bus
+resource "azurerm_resource_group" "message_bus" {
+  name     = "rg-message-bus-ne-001"
+  location = var.location
+}
+
+resource "azurerm_servicebus_namespace" "import_message_bus" {
+  name                = "sbn-import-message-bus-ne-001"
+  location            = azurerm_resource_group.message_bus.location
+  resource_group_name = azurerm_resource_group.message_bus.name
+  sku                 = "Standard"
+}
+
+resource "azurerm_servicebus_topic" "product_import_topic" {
+  name         = "sbt-product-import-topic-ne-001"
+  namespace_id = azurerm_servicebus_namespace.import_message_bus.id
+}
+
+resource "azurerm_servicebus_subscription" "product_import_subscription" {
+  name               = "sbs-product-import-subscription-ne-001"
+  topic_id           = azurerm_servicebus_topic.product_import_topic.id
+  max_delivery_count = 1
+}
+
+resource "azurerm_servicebus_subscription_rule" "correct_price_product_import_rule" {
+  name            = "sbsr-correct-price-product-import-rule-ne-001"
+  subscription_id = azurerm_servicebus_subscription.product_import_subscription.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "productPrice > 0"
+}
+
+resource "azurerm_servicebus_subscription" "wrong_product_import_subscription" {
+  name               = "sbs-wrong-product-import-subscription-ne-001"
+  topic_id           = azurerm_servicebus_topic.product_import_topic.id
+  max_delivery_count = 1
+}
+
+resource "azurerm_servicebus_subscription_rule" "wrong_price_product_import_rule" {
+  name            = "sbsr-wrong-price-product-import-rule-ne-001"
+  subscription_id = azurerm_servicebus_subscription.wrong_product_import_subscription.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "productPrice <= 0 OR productPrice IS NULL"
 }
